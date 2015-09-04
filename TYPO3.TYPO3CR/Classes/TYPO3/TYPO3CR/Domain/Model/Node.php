@@ -14,7 +14,6 @@ namespace TYPO3\TYPO3CR\Domain\Model;
 use TYPO3\Flow\Annotations as Flow;
 use TYPO3\Flow\Cache\CacheAwareInterface;
 use TYPO3\Flow\Property\PropertyMapper;
-use TYPO3\Flow\Reflection\ObjectAccess;
 use TYPO3\TYPO3CR\Domain\Factory\NodeFactory;
 use TYPO3\TYPO3CR\Domain\Repository\NodeDataRepository;
 use TYPO3\TYPO3CR\Domain\Service\Context;
@@ -84,11 +83,11 @@ class Node implements NodeInterface, CacheAwareInterface {
 	protected $nodeService;
 
 	/**
-	 * @param NodeData $nodeData
+	 * @param NodeDataInterface $nodeData
 	 * @param Context $context
 	 * @Flow\Autowiring(false)
 	 */
-	public function __construct(NodeData $nodeData, Context $context) {
+	public function __construct(NodeDataInterface $nodeData, Context $context) {
 		$this->nodeData = $nodeData;
 		$this->context = $context;
 	}
@@ -203,6 +202,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	public function getOtherNodeVariants() {
 		$otherNodeVariants = array();
 		$allNodeVariants = $this->context->getNodeVariantsByIdentifier($this->getIdentifier());
+		/** @var NodeInterface $node */
 		foreach ($allNodeVariants as $index => $node) {
 			if ($node->getNodeData() !== $this->nodeData) {
 				$otherNodeVariants[] = $node;
@@ -303,7 +303,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setWorkspace(Workspace $workspace) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getWorkspace()->getName() === $workspace->getName()) {
 			return;
@@ -343,7 +343,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setIndex($index) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getIndex() === $index) {
 			return;
@@ -409,15 +409,9 @@ class Node implements NodeInterface, CacheAwareInterface {
 			return;
 		}
 
-		if ($this->getPath() === '/') {
-			throw new NodeException('The root node cannot be moved.', 1285005924);
-		}
-
-		if ($referenceNode->getParent() !== $this->getParent() && $referenceNode->getParent()->getNode($this->getName()) !== NULL) {
-			throw new NodeExistsException('Node with path "' . $this->getName() . '" already exists.', 1292503468);
-		}
-
-		if (!$referenceNode->getParent()->willChildNodeBeAutoCreated($this->getName()) && !$referenceNode->getParent()->isNodeTypeAllowedAsChildNode($this->getNodeType())) {
+		try {
+			$this->ensureMoveIsPossible($referenceNode->getParent());
+		} catch (NodeConstraintException $nodeConstraintException) {
 			throw new NodeConstraintException('Cannot move ' . $this->__toString() . ' before ' . $referenceNode->__toString(), 1400782413);
 		}
 
@@ -427,7 +421,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 			$this->nodeDataRepository->persistEntities();
 		} else {
 			if (!$this->isNodeDataMatchingContext()) {
-				$this->materializeNodeData();
+				$this->createVariantForContext($this->context);
 			}
 		}
 
@@ -452,15 +446,9 @@ class Node implements NodeInterface, CacheAwareInterface {
 			return;
 		}
 
-		if ($this->getPath() === '/') {
-			throw new NodeException('The root node cannot be moved.', 1316361483);
-		}
-
-		if ($referenceNode->getParent() !== $this->getParent() && $referenceNode->getParent()->getNode($this->getName()) !== NULL) {
-			throw new NodeExistsException('Node with path "' . $this->getName() . '" already exists.', 1292503469);
-		}
-
-		if (!$referenceNode->getParent()->willChildNodeBeAutoCreated($this->getName()) && !$referenceNode->getParent()->isNodeTypeAllowedAsChildNode($this->getNodeType())) {
+		try {
+			$this->ensureMoveIsPossible($referenceNode->getParent());
+		} catch (NodeConstraintException $nodeConstraintException) {
 			throw new NodeConstraintException('Cannot move ' . $this->__toString() . ' after ' . $referenceNode->__toString(), 1404648100);
 		}
 
@@ -470,7 +458,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 			$this->nodeDataRepository->persistEntities();
 		} else {
 			if (!$this->isNodeDataMatchingContext()) {
-				$this->materializeNodeData();
+				$this->createVariantForContext($this->context);
 			}
 		}
 
@@ -495,15 +483,9 @@ class Node implements NodeInterface, CacheAwareInterface {
 			return;
 		}
 
-		if ($this->getPath() === '/') {
-			throw new NodeException('The root node cannot be moved.', 1346769001);
-		}
-
-		if ($referenceNode !== $this->getParent() && $referenceNode->getNode($this->getName()) !== NULL) {
-			throw new NodeExistsException('Node with path "' . $this->getName() . '" already exists.', 1292503470);
-		}
-
-		if (!$referenceNode->willChildNodeBeAutoCreated($this->getName()) && !$referenceNode->isNodeTypeAllowedAsChildNode($this->getNodeType())) {
+		try {
+			$this->ensureMoveIsPossible($referenceNode);
+		} catch (NodeConstraintException $nodeConstraintException) {
 			throw new NodeConstraintException('Cannot move ' . $this->__toString() . ' into ' . $referenceNode->__toString(), 1404648124);
 		}
 
@@ -515,6 +497,29 @@ class Node implements NodeInterface, CacheAwareInterface {
 		$this->context->getFirstLevelNodeCache()->flush();
 		$this->emitAfterNodeMove($this, $referenceNode, NodeDataRepository::POSITION_LAST);
 		$this->emitNodeUpdated($this);
+	}
+
+	/**
+	 * Does preliminary checks to make sure this node can actually be moved into the given new parent.
+	 *
+	 * @param NodeInterface $newParent
+	 * @return void
+	 * @throws NodeConstraintException
+	 * @throws NodeException
+	 * @throws NodeExistsException
+	 */
+	protected function ensureMoveIsPossible(NodeInterface $newParent) {
+		if ($this->getPath() === '/') {
+			throw new NodeException('The root node cannot be moved.', 1346769001);
+		}
+
+		if ($newParent !== $this->getParent() && $newParent->getNode($this->getName()) !== NULL) {
+			throw new NodeExistsException('Node with path "' . $this->getName() . '" already exists.', 1292503470);
+		}
+
+		if (!$newParent->willChildNodeBeAutoCreated($this->getName()) && !$newParent->isNodeTypeAllowedAsChildNode($this->getNodeType())) {
+			throw new NodeConstraintException('Cannot move ' . $this->__toString() . ' into ' . $newParent->__toString(), 1404648124);
+		}
 	}
 
 	/**
@@ -676,7 +681,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setProperty($propertyName, $value) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		// Arrays could potentially contain entities and objects could be entities. In that case even if the object is the same it needs to be persisted in NodeData.
 		if (!is_object($value) && !is_array($value) && $this->getProperty($propertyName) === $value) {
@@ -762,7 +767,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function removeProperty($propertyName) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if (!$this->hasProperty($propertyName)) {
 			return;
@@ -810,7 +815,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setContentObject($contentObject) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getContentObject() === $contentObject) {
 			return;
@@ -839,7 +844,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function unsetContentObject() {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		$this->nodeData->unsetContentObject();
 
@@ -856,7 +861,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setNodeType(NodeType $nodeType) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getNodeType() === $nodeType) {
 			return;
@@ -891,21 +896,8 @@ class Node implements NodeInterface, CacheAwareInterface {
 		$this->emitBeforeNodeCreate($this, $name, $nodeType, $identifier);
 		$newNode = $this->createSingleNode($name, $nodeType, $identifier);
 		if ($nodeType !== NULL) {
-			foreach ($nodeType->getDefaultValuesForProperties() as $propertyName => $propertyValue) {
-				if (substr($propertyName, 0, 1) === '_') {
-					ObjectAccess::setProperty($newNode, substr($propertyName, 1), $propertyValue);
-				} else {
-					$newNode->setProperty($propertyName, $propertyValue);
-				}
-			}
-
-			foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeType) {
-				$childNodeIdentifier = $this->buildAutoCreatedChildNodeIdentifier($childNodeName, $newNode->getIdentifier());
-				$alreadyPresentChildNode = $newNode->getNode($childNodeName);
-				if ($alreadyPresentChildNode === NULL) {
-					$newNode->createNode($childNodeName, $childNodeType, $childNodeIdentifier);
-				}
-			}
+			$this->nodeService->setDefaultValues($newNode);
+			$this->nodeService->createChildNodes($newNode);
 		}
 
 		$this->context->getFirstLevelNodeCache()->flush();
@@ -916,26 +908,10 @@ class Node implements NodeInterface, CacheAwareInterface {
 	}
 
 	/**
-	 * Generate a stable identifier for auto-created child nodes
-	 *
-	 * This is needed if multiple node variants are created through "createNode" with different dimension values. If
-	 * child nodes with the same path and different identifiers exist, bad things can happen.
-	 *
-	 * @param string $childNodeName
-	 * @param string $identifier
-	 * @return string The generated UUID like identifier
-	 */
-	protected function buildAutoCreatedChildNodeIdentifier($childNodeName, $identifier) {
-		$hex = md5($identifier . '-' . $childNodeName);
-		return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4) . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20, 12);
-	}
-
-	/**
 	 * Creates, adds and returns a child node of this node, without setting default
 	 * properties or creating subnodes. Only used internally.
 	 *
 	 * For internal use only!
-	 * TODO: New SiteImportService uses createNode() and DQL. When we drop the LegagcySiteImportService we can change this to protected.
 	 *
 	 * @param string $name Name of the new node
 	 * @param NodeType $nodeType Node type of the new node (optional)
@@ -943,14 +919,14 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 * @return Node
 	 * @throws NodeConstraintException
 	 */
-	public function createSingleNode($name, NodeType $nodeType = NULL, $identifier = NULL) {
+	protected function createSingleNode($name, NodeType $nodeType = NULL, $identifier = NULL) {
 		if ($nodeType !== NULL && !$this->willChildNodeBeAutoCreated($name) && !$this->isNodeTypeAllowedAsChildNode($nodeType)) {
 			throw new NodeConstraintException('Cannot create new node "' . $name . '" of Type "' . $nodeType->getName() . '" in ' . $this->__toString(), 1400782413);
 		}
 
 		$dimensions = $this->context->getTargetDimensionValues();
 
-		$nodeData = $this->nodeData->createSingleNodeData($name, $nodeType, $identifier, $this->context->getWorkspace(), $dimensions);
+		$nodeData = $this->nodeData->createNodeData($name, $nodeType, $identifier, $this->context->getWorkspace(), $dimensions);
 		$node = $this->nodeFactory->createFromNodeData($nodeData, $this->context);
 
 		$this->context->getFirstLevelNodeCache()->flush();
@@ -965,7 +941,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 * @param string $name The node name to check.
 	 * @return boolean TRUE if the given nodeName is configured as auto-created child node.
 	 */
-	public function willChildNodeBeAutoCreated($name) {
+	protected function willChildNodeBeAutoCreated($name) {
 		$autoCreatedChildNodes = $this->getNodeType()->getAutoCreatedChildNodes();
 		return isset($autoCreatedChildNodes[$name]);
 	}
@@ -973,14 +949,19 @@ class Node implements NodeInterface, CacheAwareInterface {
 	/**
 	 * Creates and persists a node from the given $nodeTemplate as child node
 	 *
-	 * @param NodeTemplate $nodeTemplate
+	 * @param SimpleNodeDataContainerInterface $nodeTemplate
 	 * @param string $nodeName name of the new node. If not specified the name of the nodeTemplate will be used.
 	 * @return NodeInterface the freshly generated node
 	 * @api
 	 */
-	public function createNodeFromTemplate(NodeTemplate $nodeTemplate, $nodeName = NULL) {
-		$nodeData = $this->nodeData->createNodeDataFromTemplate($nodeTemplate, $nodeName, $this->context->getWorkspace(), $this->context->getDimensions());
+	public function createNodeFromTemplate(SimpleNodeDataContainerInterface $nodeTemplate, $nodeName = NULL) {
+		$newNodeName = $nodeName ?: $nodeTemplate->getName();
+		$possibleNodeName = $this->nodeService->generateUniqueNodeName($this->getPath(), $newNodeName);
+		$nodeData = $this->nodeData->createNodeData($possibleNodeName, $nodeTemplate->getNodeType(), $nodeTemplate->getIdentifier(), $this->context->getWorkspace(), $this->context->getDimensions());
+		$nodeData->similarize($nodeTemplate);
 		$node = $this->nodeFactory->createFromNodeData($nodeData, $this->context);
+		$this->nodeService->setDefaultValues($node);
+		$this->nodeService->createChildNodes($node);
 
 		$this->context->getFirstLevelNodeCache()->flush();
 		$this->emitNodeAdded($node);
@@ -1063,7 +1044,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 * @api
 	 */
 	public function hasChildNodes($nodeTypeFilter = NULL) {
-		return ($this->getNumberOfChildNodes($nodeTypeFilter, $this->context->getWorkspace(), $this->context->getDimensions()) > 0);
+		return ($this->getNumberOfChildNodes($nodeTypeFilter) > 0);
 	}
 
 	/**
@@ -1085,7 +1066,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setRemoved($removed) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 
 		if ((boolean)$removed === TRUE) {
@@ -1123,7 +1104,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setHidden($hidden) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->isHidden() === $hidden) {
 			return;
@@ -1153,7 +1134,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setHiddenBeforeDateTime(\DateTime $dateTime = NULL) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getHiddenBeforeDateTime() instanceof \DateTime && $dateTime instanceof \DateTime && $this->getHiddenBeforeDateTime()->format(\DateTime::W3C) === $dateTime->format(\DateTime::W3C)) {
 			return;
@@ -1183,7 +1164,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setHiddenAfterDateTime(\DateTime $dateTime = NULL) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getHiddenAfterDateTime() instanceof \DateTime && $dateTime instanceof \DateTime && $this->getHiddenAfterDateTime()->format(\DateTime::W3C) === $dateTime->format(\DateTime::W3C)) {
 			return;
@@ -1213,7 +1194,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setHiddenInIndex($hidden) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->isHiddenInIndex() === $hidden) {
 			return;
@@ -1243,7 +1224,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	public function setAccessRoles(array $accessRoles) {
 		if (!$this->isNodeDataMatchingContext()) {
-			$this->materializeNodeData();
+			$this->createVariantForContext($this->context);
 		}
 		if ($this->getAccessRoles() === $accessRoles) {
 			return;
@@ -1319,32 +1300,6 @@ class Node implements NodeInterface, CacheAwareInterface {
 	}
 
 	/**
-	 * Materializes the original node data (of a different workspace) into the current
-	 * workspace.
-	 *
-	 * @return void
-	 */
-	protected function materializeNodeData() {
-		$dimensions = $this->context->getTargetDimensionValues();
-
-		$newNodeData = new NodeData($this->nodeData->getPath(), $this->context->getWorkspace(), $this->nodeData->getIdentifier(), $dimensions);
-		$this->nodeDataRepository->add($newNodeData);
-
-		$newNodeData->similarize($this->nodeData);
-
-		$this->nodeData = $newNodeData;
-		$this->nodeDataIsMatchingContext = TRUE;
-
-		$nodeType = $this->getNodeType();
-		foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeConfiguration) {
-			$childNode = $this->getNode($childNodeName);
-			if ($childNode instanceof Node && !$childNode->isNodeDataMatchingContext()) {
-				$childNode->materializeNodeData();
-			}
-		}
-	}
-
-	/**
 	 * Create a recursive copy of this node below $referenceNode with $nodeName.
 	 *
 	 * $detachedCopy only has an influence if we are copying from one dimension to the other, possibly creating a new
@@ -1398,8 +1353,7 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 */
 	protected function isNodeDataMatchingContext() {
 		if ($this->nodeDataIsMatchingContext === NULL) {
-			$workspacesMatch = $this->nodeData->getWorkspace() !== NULL && $this->context->getWorkspace() !== NULL && $this->nodeData->getWorkspace()->getName() === $this->context->getWorkspace()->getName();
-			$this->nodeDataIsMatchingContext = $workspacesMatch && $this->dimensionsAreMatchingTargetDimensionValues();
+			$this->nodeDataIsMatchingContext = $this->context->isNodeMatching($this);
 		}
 		return $this->nodeDataIsMatchingContext;
 	}
@@ -1411,12 +1365,12 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 * @param boolean $isCopy
 	 * @return void
 	 */
-	public function similarize(NodeInterface $sourceNode, $isCopy = FALSE) {
+	protected function similarize(NodeInterface $sourceNode, $isCopy = FALSE) {
 		$this->nodeData->similarize($sourceNode->getNodeData(), $isCopy);
 	}
 
 	/**
-	 * @return NodeData
+	 * @return NodeDataInterface
 	 */
 	public function getNodeData() {
 		return $this->nodeData;
@@ -1458,63 +1412,43 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 * @return NodeInterface
 	 */
 	public function createVariantForContext($context) {
-		$autoCreatedChildNodes = array();
 		$nodeType = $this->getNodeType();
-		foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeConfiguration) {
-			$childNode = $this->getNode($childNodeName);
-			if ($childNode !== NULL) {
-				$autoCreatedChildNodes[$childNodeName] = $childNode;
-			}
-		}
 
-		$nodeData = new NodeData($this->nodeData->getPath(), $context->getWorkspace(), $this->nodeData->getIdentifier(), $context->getTargetDimensionValues());
-		$nodeData->similarize($this->nodeData);
-
-		if ($this->context !== $context) {
-			$node = $this->nodeFactory->createFromNodeData($nodeData, $context);
-		} else {
-			$this->setNodeData($nodeData);
-			$node = $this;
-		}
+		$nodeData = $this->createNodeDataVariant($context);
+		$node = $this->nodeFactory->createFromNodeData($nodeData, $context);
+		$node->setNodeData($nodeData);
 
 		$this->context->getFirstLevelNodeCache()->flush();
 		$this->emitNodeAdded($node);
 
-		/**
-		 * @var $autoCreatedChildNode NodeInterface
-		 */
-		foreach ($autoCreatedChildNodes as $autoCreatedChildNode) {
-			$autoCreatedChildNode->createVariantForContext($context);
+		foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeConfiguration) {
+			$childNode = $node->getNode($childNodeName);
+			if ($childNode === NULL || $context->isNodeMatching($childNode)) {
+				continue;
+			}
+			$childNode->createVariantForContext($context);
 		}
 
 		return $node;
 	}
 
 	/**
-	 * Internal method
+	 * Creates a NodeData container similar to the one attached to this node but living inside the given context.
 	 *
-	 * The dimension value of this node has to match the current target dimension value (must be higher in priority or equal)
-	 *
-	 * @return boolean
+	 * @param Context $context
+	 * @return NodeDataInterface
 	 */
-	public function dimensionsAreMatchingTargetDimensionValues() {
-		$dimensions = $this->getDimensions();
-		$contextDimensions = $this->context->getDimensions();
-		foreach ($this->context->getTargetDimensions() as $dimensionName => $targetDimensionValue) {
-			if (!isset($dimensions[$dimensionName])) {
-				return FALSE;
-			} elseif (!in_array($targetDimensionValue, $dimensions[$dimensionName], TRUE)) {
-				$contextDimensionValues = $contextDimensions[$dimensionName];
-				$targetPositionInContext = array_search($targetDimensionValue, $contextDimensionValues, TRUE);
-				$nodePositionInContext = min(array_map(function ($value) use ($contextDimensionValues) { return array_search($value, $contextDimensionValues, TRUE); }, $dimensions[$dimensionName]));
+	protected function createNodeDataVariant(Context $context) {
+		$newNodeData = $this->nodeData->getParent()->createNodeData(
+			$this->nodeData->getName(),
+			$this->getNodeType(),
+			$this->nodeData->getIdentifier(),
+			$context->getWorkspace(),
+			$context->getTargetDimensionValues()
+		);
+		$newNodeData->similarize($this->nodeData);
 
-				$val = $targetPositionInContext !== FALSE && $nodePositionInContext !== FALSE && $targetPositionInContext >= $nodePositionInContext;
-				if ($val === FALSE) {
-					return FALSE;
-				}
-			}
-		}
-		return TRUE;
+		return $newNodeData;
 	}
 
 	/**
@@ -1522,10 +1456,10 @@ class Node implements NodeInterface, CacheAwareInterface {
 	 *
 	 * NOTE: This is internal only and should not be used outside of the TYPO3CR.
 	 *
-	 * @param NodeData $nodeData
+	 * @param NodeDataInterface $nodeData
 	 * @return void
 	 */
-	public function setNodeData(NodeData $nodeData) {
+	public function setNodeData(NodeDataInterface $nodeData) {
 		$this->nodeData = $nodeData;
 		$this->nodeDataIsMatchingContext = NULL;
 	}

@@ -20,7 +20,7 @@ use TYPO3\TYPO3CR\Domain\Utility\NodePaths;
  *
  * @api
  */
-class NodeTemplate extends AbstractNodeData {
+class NodeTemplate extends AbstractNodeData implements SimpleNodeDataContainerInterface {
 
 	/**
 	 * The UUID to use for the new node. Use with care.
@@ -93,14 +93,6 @@ class NodeTemplate extends AbstractNodeData {
 		}
 
 		return NodePaths::generateRandomNodeName();
-	}
-
-	/**
-	 * A NodeTemplate is not stored in any workspace, thus this method returns NULL.
-	 *
-	 * @return void
-	 */
-	public function getWorkspace() {
 	}
 
 }

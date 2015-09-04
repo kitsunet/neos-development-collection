@@ -303,7 +303,7 @@ class Workspace {
 
 		$nodeWasMoved = FALSE;
 		$movedShadowNodeData = $this->nodeDataRepository->findOneByMovedTo($sourceNodeData);
-		if ($movedShadowNodeData instanceof NodeData) {
+		if ($movedShadowNodeData instanceof NodeDataInterface) {
 			$nodeWasMoved = TRUE;
 			if ($movedShadowNodeData->isRemoved()) {
 				$this->nodeDataRepository->remove($movedShadowNodeData);
@@ -338,7 +338,7 @@ class Workspace {
 		$nodeData = $node->getNodeData();
 
 		$movedShadowNodeData = $this->nodeDataRepository->findOneByMovedTo($nodeData);
-		if ($movedShadowNodeData instanceof NodeData && $movedShadowNodeData->isRemoved()) {
+		if ($movedShadowNodeData instanceof NodeDataInterface && $movedShadowNodeData->isRemoved()) {
 			$this->nodeDataRepository->remove($movedShadowNodeData);
 		}
 

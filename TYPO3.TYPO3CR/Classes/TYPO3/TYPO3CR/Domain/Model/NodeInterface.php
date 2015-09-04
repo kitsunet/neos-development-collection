@@ -416,29 +416,14 @@ interface NodeInterface {
 	public function createNode($name, NodeType $nodeType = NULL, $identifier = NULL);
 
 	/**
-	 * Creates, adds and returns a child node of this node, without setting default
-	 * properties or creating subnodes.
-	 *
-	 * For internal use only!
-	 *
-	 * @param string $name Name of the new node
-	 * @param \TYPO3\TYPO3CR\Domain\Model\NodeType $nodeType Node type of the new node (optional)
-	 * @param string $identifier The identifier of the node, unique within the workspace, optional(!)
-	 * @return \TYPO3\TYPO3CR\Domain\Model\Node
-	 * @throws \InvalidArgumentException if the node name is not accepted.
-	 * @throws \TYPO3\TYPO3CR\Exception\NodeExistsException if a node with this path already exists.
-	 */
-	public function createSingleNode($name, NodeType $nodeType = NULL, $identifier = NULL);
-
-	/**
 	 * Creates and persists a node from the given $nodeTemplate as child node
 	 *
-	 * @param \TYPO3\TYPO3CR\Domain\Model\NodeTemplate $nodeTemplate
+	 * @param \TYPO3\TYPO3CR\Domain\Model\SimpleNodeDataContainerInterface $nodeTemplate
 	 * @param string $nodeName name of the new node. If not specified the name of the nodeTemplate will be used.
 	 * @return NodeInterface the freshly generated node
 	 * @api
 	 */
-	public function createNodeFromTemplate(NodeTemplate $nodeTemplate, $nodeName = NULL);
+	public function createNodeFromTemplate(SimpleNodeDataContainerInterface $nodeTemplate, $nodeName = NULL);
 
 	/**
 	 * Returns a node specified by the given relative path.

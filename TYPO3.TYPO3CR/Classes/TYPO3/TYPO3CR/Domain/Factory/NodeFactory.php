@@ -15,6 +15,7 @@ use TYPO3\Flow\Annotations as Flow;
 use TYPO3\Flow\Object\ObjectManagerInterface;
 use TYPO3\Flow\Security\Context as SecurityContext;
 use TYPO3\TYPO3CR\Domain\Model\NodeData;
+use TYPO3\TYPO3CR\Domain\Model\NodeDataInterface;
 use TYPO3\TYPO3CR\Domain\Model\NodeInterface;
 use TYPO3\TYPO3CR\Domain\Service\Context;
 use TYPO3\TYPO3CR\Domain\Service\ContextFactoryInterface;
@@ -30,7 +31,7 @@ use TYPO3\TYPO3CR\Exception\NodeConfigurationException;
 class NodeFactory {
 
 	/**
-	 * @var array<\TYPO3\TYPO3CR\Domain\Model\Node>
+	 * @var array<\TYPO3\TYPO3CR\Domain\Model\NodeInterface>
 	 */
 	protected $nodes = array();
 
@@ -59,12 +60,12 @@ class NodeFactory {
 	 * If this factory has previously created a Node for the given $node and it's dimensions,
 	 * it will return the same node again.
 	 *
-	 * @param NodeData $nodeData
+	 * @param NodeDataInterface $nodeData
 	 * @param Context $context
 	 * @return \TYPO3\TYPO3CR\Domain\Model\NodeInterface
 	 * @throws \TYPO3\TYPO3CR\Exception\NodeConfigurationException if a configured 'class' for a Node does not exist or does not inherit NodeInterface
 	 */
-	public function createFromNodeData(NodeData $nodeData, Context $context) {
+	public function createFromNodeData(NodeDataInterface $nodeData, Context $context) {
 		if ($nodeData->isInternal()) return NULL;
 
 		$internalNodeIdentifier = $nodeData->getIdentifier() . spl_object_hash($context);

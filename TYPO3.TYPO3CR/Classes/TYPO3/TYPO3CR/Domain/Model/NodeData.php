@@ -18,7 +18,6 @@ use TYPO3\Flow\Utility\Algorithms;
 use TYPO3\TYPO3CR\Domain\Repository\NodeDataRepository;
 use Doctrine\ORM\Mapping as ORM;
 use TYPO3\Flow\Annotations as Flow;
-use TYPO3\TYPO3CR\Domain\Service\NodeServiceInterface;
 use TYPO3\TYPO3CR\Domain\Utility\NodePaths;
 use TYPO3\TYPO3CR\Exception\NodeExistsException;
 use Gedmo\Mapping\Annotation as Gedmo;
@@ -43,7 +42,7 @@ use TYPO3\TYPO3CR\Utility;
  * 	}
  * )
  */
-class NodeData extends AbstractNodeData {
+class NodeData extends AbstractNodeData implements NodeDataInterface {
 
 	/**
 	 * Auto-incrementing version of this node data, used for optimistic locking
@@ -209,12 +208,6 @@ class NodeData extends AbstractNodeData {
 	 * @var \TYPO3\Flow\Security\Context
 	 */
 	protected $securityContext;
-
-	/**
-	 * @Flow\Inject
-	 * @var NodeServiceInterface
-	 */
-	protected $nodeService;
 
 	/**
 	 * Constructs this node data container
@@ -417,35 +410,6 @@ class NodeData extends AbstractNodeData {
 	}
 
 	/**
-	 * Creates, adds and returns a child node of this node. Also sets default
-	 * properties and creates default subnodes.
-	 *
-	 * @param string $name Name of the new node
-	 * @param \TYPO3\TYPO3CR\Domain\Model\NodeType $nodeType Node type of the new node (optional)
-	 * @param string $identifier The identifier of the node, unique within the workspace, optional(!)
-	 * @param \TYPO3\TYPO3CR\Domain\Model\Workspace $workspace
-	 * @param array $dimensions
-	 * @return \TYPO3\TYPO3CR\Domain\Model\NodeData
-	 */
-	public function createNodeData($name, NodeType $nodeType = NULL, $identifier = NULL, Workspace $workspace = NULL, array $dimensions = NULL) {
-		$newNodeData = $this->createSingleNodeData($name, $nodeType, $identifier, $workspace, $dimensions);
-		if ($nodeType !== NULL) {
-			foreach ($nodeType->getDefaultValuesForProperties() as $propertyName => $propertyValue) {
-				if (substr($propertyName, 0, 1) === '_') {
-					ObjectAccess::setProperty($newNodeData, substr($propertyName, 1), $propertyValue);
-				} else {
-					$newNodeData->setProperty($propertyName, $propertyValue);
-				}
-			}
-
-			foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeType) {
-				$newNodeData->createNodeData($childNodeName, $childNodeType, NULL, $workspace, $dimensions);
-			}
-		}
-		return $newNodeData;
-	}
-
-	/**
 	 * Creates, adds and returns a child node of this node, without setting default
 	 * properties or creating subnodes.
 	 *
@@ -458,14 +422,14 @@ class NodeData extends AbstractNodeData {
 	 * @throws \InvalidArgumentException if the node name is not accepted.
 	 * @return \TYPO3\TYPO3CR\Domain\Model\NodeData
 	 */
-	public function createSingleNodeData($name, NodeType $nodeType = NULL, $identifier = NULL, Workspace $workspace = NULL, array $dimensions = NULL) {
+	public function createNodeData($name, NodeType $nodeType = NULL, $identifier = NULL, Workspace $workspace = NULL, array $dimensions = NULL) {
 		if (!is_string($name) || preg_match(NodeInterface::MATCH_PATTERN_NAME, $name) !== 1) {
 			throw new \InvalidArgumentException('Invalid node name "' . $name . '" (a node name must only contain lowercase characters, numbers and the "-" sign).', 1292428697);
 		}
 
-		$nodeWorkspace = $workspace ? : $this->workspace;
+		$nodeWorkspace = $workspace ?: $this->workspace;
 		$newPath = NodePaths::addNodePathSegment($this->path, $name);
-		if ($this->nodeDataRepository->findOneByPath($newPath, $nodeWorkspace, $dimensions, NULL) !== NULL) {
+		if ($this->nodeDataRepository->findExactMatchByPath($newPath, $nodeWorkspace, $dimensions, NULL) !== NULL) {
 			throw new NodeExistsException(sprintf('Node with path "' . $newPath . '" already exists in workspace %s and given dimensions %s.', $nodeWorkspace->getName(), var_export($dimensions, TRUE)), 1292503471);
 		}
 
@@ -473,26 +437,10 @@ class NodeData extends AbstractNodeData {
 		if ($nodeType !== NULL) {
 			$newNodeData->setNodeType($nodeType);
 		}
+
+		$this->addOrUpdate($newNodeData);
 		$this->nodeDataRepository->setNewIndex($newNodeData, NodeDataRepository::POSITION_LAST);
 
-		return $newNodeData;
-	}
-
-	/**
-	 * Creates and persists a node from the given $nodeTemplate as child node
-	 *
-	 * @param \TYPO3\TYPO3CR\Domain\Model\NodeTemplate $nodeTemplate
-	 * @param string $nodeName name of the new node. If not specified the name of the nodeTemplate will be used.
-	 * @param \TYPO3\TYPO3CR\Domain\Model\Workspace $workspace
-	 * @param array $dimensions
-	 * @return \TYPO3\TYPO3CR\Domain\Model\NodeData the freshly generated node
-	 */
-	public function createNodeDataFromTemplate(NodeTemplate $nodeTemplate, $nodeName = NULL, Workspace $workspace = NULL, array $dimensions = NULL) {
-		$newNodeName = $nodeName !== NULL ? $nodeName : $nodeTemplate->getName();
-		$possibleNodeName = $this->nodeService->generateUniqueNodeName($this->getPath(), $newNodeName);
-
-		$newNodeData = $this->createNodeData($possibleNodeName, $nodeTemplate->getNodeType(), $nodeTemplate->getIdentifier(), $workspace, $dimensions);
-		$newNodeData->similarize($nodeTemplate);
 		return $newNodeData;
 	}
 
@@ -678,27 +626,17 @@ class NodeData extends AbstractNodeData {
 	 *  - content object
 	 * will be set to the same values as in the source node.
 	 *
-	 * @param \TYPO3\TYPO3CR\Domain\Model\AbstractNodeData $sourceNode
+	 * @param \TYPO3\TYPO3CR\Domain\Model\SimpleNodeDataContainerInterface $sourceNode
 	 * @param boolean $isCopy
 	 * @return void
 	 */
-	public function similarize(AbstractNodeData $sourceNode, $isCopy = FALSE) {
+	public function similarize(SimpleNodeDataContainerInterface $sourceNode, $isCopy = FALSE) {
 		$this->properties = array();
 		foreach ($sourceNode->getProperties() as $propertyName => $propertyValue) {
 			$this->setProperty($propertyName, $propertyValue);
 		}
 
-		$propertyNames = array(
-			'nodeType', 'hidden', 'hiddenAfterDateTime',
-			'hiddenBeforeDateTime', 'hiddenInIndex', 'accessRoles'
-		);
-		if (!$isCopy) {
-			$propertyNames[] = 'creationDateTime';
-			$propertyNames[] = 'lastModificationDateTime';
-		}
-		if ($sourceNode instanceof NodeData) {
-			$propertyNames[] = 'index';
-		}
+		$propertyNames = $sourceNode->getSimilarizePropertyNames($isCopy);
 		foreach ($propertyNames as $propertyName) {
 			ObjectAccess::setProperty($this, $propertyName, ObjectAccess::getProperty($sourceNode, $propertyName));
 		}
@@ -707,6 +645,19 @@ class NodeData extends AbstractNodeData {
 		if ($contentObject !== NULL) {
 			$this->setContentObject($contentObject);
 		}
+	}
+
+	/**
+	 * Returns all internal property names that need to be similarized for this NodeData container.
+	 *
+	 * @param boolean $isCopy
+	 * @return array
+	 */
+	protected function getSimilarizePropertyNames($isCopy = FALSE) {
+		$propertyNames = parent::getSimilarizePropertyNames($isCopy);
+		$propertyNames[] = 'index';
+
+		return $propertyNames;
 	}
 
 	/**

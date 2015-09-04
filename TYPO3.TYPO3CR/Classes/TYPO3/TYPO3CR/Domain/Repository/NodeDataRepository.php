@@ -195,11 +195,12 @@ class NodeDataRepository extends Repository {
 			$workspace = $workspace->getBaseWorkspace();
 		}
 		$queryBuilder = $this->createQueryBuilder($workspaces);
-		if ($dimensions !== NULL) {
-			$this->addDimensionJoinConstraintsToQueryBuilder($queryBuilder, $dimensions);
-		} else {
-			$dimensions = array();
+
+		if ($dimensions === NULL) {
+			$dimensions = [];
 		}
+
+		$this->addDimensionJoinConstraintsToQueryBuilder($queryBuilder, $dimensions);
 		$this->addPathConstraintToQueryBuilder($queryBuilder, $path);
 
 		$query = $queryBuilder->getQuery();
@@ -239,6 +240,58 @@ class NodeDataRepository extends Repository {
 		}
 
 		return $node;
+	}
+
+	/**
+	 * @param string $path
+	 * @param Workspace $workspace
+	 * @param array $dimensions
+	 * @param boolean $removedNodes
+	 * @return NodeData
+	 * @throws \InvalidArgumentException
+	 */
+	public function findExactMatchByPath($path, Workspace $workspace, array $dimensions, $removedNodes = NULL) {
+		$path = strtolower($path);
+		if ($path === '' || ($path !== '/' && ($path[0] !== '/' || substr($path, -1, 1) === '/'))) {
+			throw new \InvalidArgumentException('"' . $path . '" is not a valid path: must start but not end with a slash.', 1284985489);
+		}
+
+		if ($path === '/') {
+			return $workspace->getRootNodeData();
+		}
+
+		foreach ($this->addedNodes as $node) {
+			if ($node->getPath() === $path && $node->matchesWorkspaceAndDimensions($workspace, $dimensions)) {
+				return $node;
+			}
+		}
+
+		foreach ($this->removedNodes as $node) {
+			if ($node->getPath() === $path && $node->matchesWorkspaceAndDimensions($workspace, $dimensions)) {
+				return NULL;
+			}
+		}
+
+		$workspaces = [$workspace];
+		$queryBuilder = $this->createQueryBuilder($workspaces);
+
+		if ($dimensions === NULL) {
+			$dimensions = [];
+		}
+
+		$this->addDimensionJoinConstraintsToQueryBuilder($queryBuilder, $dimensions);
+		$this->addPathConstraintToQueryBuilder($queryBuilder, $path);
+
+		$query = $queryBuilder->getQuery();
+		$nodes = $query->getResult();
+
+		$foundNodes = $this->reduceNodeVariantsByWorkspacesAndDimensions($nodes, $workspaces, $dimensions);
+		$foundNodes = $this->filterRemovedNodes($foundNodes, $removedNodes);
+
+		if ($foundNodes !== array()) {
+			return reset($foundNodes);
+		}
+		return NULL;
 	}
 
 	/**

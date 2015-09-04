@@ -67,12 +67,6 @@ class SiteImportService {
 
 	/**
 	 * @Flow\Inject
-	 * @var LegacySiteImportService
-	 */
-	protected $legacySiteImportService;
-
-	/**
-	 * @Flow\Inject
 	 * @var ReflectionService
 	 */
 	protected $reflectionService;
@@ -172,13 +166,8 @@ class SiteImportService {
 
 			if ($this->workspaceRepository->findOneByName('live') === NULL) {
 				$this->workspaceRepository->add(new Workspace('live'));
-			}
-			$rootNode = $this->contextFactory->create()->getRootNode();
-			$this->persistenceManager->persistAll();
-
-			$sitesNode = $rootNode->getNode('/sites');
-			if ($sitesNode === NULL) {
-				$sitesNode = $rootNode->createSingleNode('sites');
+				$this->contextFactory->create()->getRootNode();
+				$this->persistenceManager->persistAll();
 			}
 
 			while ($xmlReader->read()) {
@@ -187,8 +176,7 @@ class SiteImportService {
 				}
 				$isLegacyFormat = $xmlReader->getAttribute('nodeName') !== NULL && $xmlReader->getAttribute('state') === NULL && $xmlReader->getAttribute('siteResourcesPackageKey') === NULL;
 				if ($isLegacyFormat) {
-					$site = $this->legacySiteImportService->importSitesFromFile($pathAndFilename);
-					return;
+					throw new NeosException(sprintf('The given site XML in "%s". uses the legacy format, the lastest version that supported this format was 2.0. Use this version to import this file and export to the new file format.', $pathAndFilename), 1441356021);
 				}
 
 				$site = $this->getSiteByNodeName($xmlReader->getAttribute('siteNodeName'));

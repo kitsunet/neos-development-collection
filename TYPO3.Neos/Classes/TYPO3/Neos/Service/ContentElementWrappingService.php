@@ -129,7 +129,7 @@ class ContentElementWrappingService {
 			$attributes['tabindex'] = 0;
 		}
 
-		if ($node instanceof Node && !$node->dimensionsAreMatchingTargetDimensionValues()) {
+		if ($node instanceof Node && !$contentContext->isNodeMatchingTargetDimensionValues($node)) {
 			$classNames[] = 'neos-contentelement-shine-through';
 		}
 

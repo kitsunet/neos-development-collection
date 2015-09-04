@@ -12,6 +12,7 @@ namespace TYPO3\TYPO3CR\Domain\Service;
  *                                                                        */
 
 use TYPO3\Flow\Annotations as Flow;
+use TYPO3\Flow\Reflection\ObjectAccess;
 use TYPO3\TYPO3CR\Domain\Model\NodeData;
 use TYPO3\TYPO3CR\Domain\Model\NodeInterface;
 use TYPO3\TYPO3CR\Domain\Model\NodeType;
@@ -54,7 +55,12 @@ class NodeService implements NodeServiceInterface {
 	public function setDefaultValues(NodeInterface $node) {
 		$nodeType = $node->getNodeType();
 		foreach ($nodeType->getDefaultValuesForProperties() as $propertyName => $defaultValue) {
-			if (trim($node->getProperty($propertyName)) === '') {
+			if ($propertyName[0] === '_') {
+				ObjectAccess::setProperty($node, substr($propertyName, 1), $defaultValue);
+				continue;
+			}
+
+			if (empty($node->getProperty($propertyName))) {
 				$node->setProperty($propertyName, $defaultValue);
 			}
 		}
@@ -68,20 +74,22 @@ class NodeService implements NodeServiceInterface {
 	 */
 	public function createChildNodes(NodeInterface $node) {
 		$nodeType = $node->getNodeType();
+		$contextProperties = $node->getContext()->getProperties();
+		$contextProperties['removedContentShown'] = TRUE;
+		$context = $this->contextFactory->create($contextProperties);
+
 		foreach ($nodeType->getAutoCreatedChildNodes() as $childNodeName => $childNodeType) {
-			try {
-				$node->createNode($childNodeName, $childNodeType);
-			} catch (NodeExistsException $exception) {
-				// If you have a node that has been marked as removed, but is needed again
-				// the old node is recovered
-				$childNodePath = NodePaths::addNodePathSegment($node->getPath(), $childNodeName);
-				$contextProperties = $node->getContext()->getProperties();
-				$contextProperties['removedContentShown'] = TRUE;
-				$context = $this->contextFactory->create($contextProperties);
-				$childNode = $context->getNode($childNodePath);
-				if ($childNode->isRemoved()) {
-					$childNode->setRemoved(FALSE);
-				}
+			$childNodePath = NodePaths::addNodePathSegment($node->getPath(), $childNodeName);
+			$alreadyPresentChildNode = $context->getNode($childNodePath);
+
+			if ($alreadyPresentChildNode === NULL) {
+				$childNodeIdentifier = $this->buildAutoCreatedChildNodeIdentifier($childNodeName, $node->getIdentifier());
+				$node->createNode($childNodeName, $childNodeType, $childNodeIdentifier);
+				continue;
+			}
+
+			if ($alreadyPresentChildNode->isRemoved()) {
+				$alreadyPresentChildNode->setRemoved(FALSE);
 			}
 		}
 	}
@@ -215,4 +223,20 @@ class NodeService implements NodeServiceInterface {
 
 		return $possibleNodeName;
 	}
+
+	/**
+	 * Generate a stable identifier for auto-created child nodes
+	 *
+	 * This is needed if multiple node variants are created through "createNode" with different dimension values. If
+	 * child nodes with the same path and different identifiers exist, bad things can happen.
+	 *
+	 * @param string $childNodeName
+	 * @param string $identifier
+	 * @return string The generated UUID like identifier
+	 */
+	protected function buildAutoCreatedChildNodeIdentifier($childNodeName, $identifier) {
+		$hex = md5($identifier . '-' . $childNodeName);
+		return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4) . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20, 12);
+	}
+
 }

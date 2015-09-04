@@ -518,10 +518,21 @@ abstract class AbstractNodeData {
 	}
 
 	/**
-	 * Returns the workspace this node is contained in
+	 * Returns all internal property names that need to be similarized for this NodeData container.
 	 *
-	 * @return \TYPO3\TYPO3CR\Domain\Model\Workspace
+	 * @param boolean $isCopy If the similarize call is creating a copy or not.
+	 * @return array
 	 */
-	abstract public function getWorkspace();
+	protected function getSimilarizePropertyNames($isCopy = FALSE) {
+		$propertyNames = array(
+			'nodeType', 'hidden', 'hiddenAfterDateTime',
+			'hiddenBeforeDateTime', 'hiddenInIndex', 'accessRoles'
+		);
+		if (!$isCopy) {
+			$propertyNames[] = 'creationDateTime';
+			$propertyNames[] = 'lastModificationDateTime';
+		}
 
+		return $propertyNames;
+	}
 }

@@ -312,22 +312,19 @@ class Context {
 	 * @return NodeInterface A new or existing node that matches this context
 	 */
 	public function adoptNode(NodeInterface $node, $recursive = FALSE) {
-		if ($node->getContext() === $this && $node->dimensionsAreMatchingTargetDimensionValues()) {
+		if ($node->getContext() === $this && $this->isNodeMatching($node)) {
 			return $node;
 		}
 
 		$this->emitBeforeAdoptNode($node, $this, $recursive);
 
 		$existingNode = $this->getNodeByIdentifier($node->getIdentifier());
-		if ($existingNode !== NULL) {
-			if ($existingNode->dimensionsAreMatchingTargetDimensionValues()) {
-				$adoptedNode = $existingNode;
-			} else {
-				$adoptedNode = $existingNode->createVariantForContext($this);
-			}
-		} else {
+		$adoptedNode = $existingNode;
+
+		if ($existingNode === NULL || $this->isNodeMatching($existingNode) === FALSE) {
 			$adoptedNode = $node->createVariantForContext($this);
 		}
+
 		$this->firstLevelNodeCache->setByIdentifier($adoptedNode->getIdentifier(), $adoptedNode);
 
 		if ($recursive) {
@@ -343,6 +340,57 @@ class Context {
 		$this->emitAfterAdoptNode($node, $this, $recursive);
 
 		return $adoptedNode;
+	}
+
+	/**
+	 * Does the given Node match Workspace and Dimensions represented by this context.
+	 *
+	 * @param NodeInterface $node
+	 * @return boolean
+	 */
+	public function isNodeMatching(NodeInterface $node) {
+		if (!$this->isNodeInSameWorkspace($node)) {
+			return FALSE;
+		}
+
+		return $this->isNodeMatchingTargetDimensionValues($node);
+	}
+
+	/**
+	 * Is the given Node in the same workspace that this context represents.
+	 *
+	 * @param NodeInterface $node
+	 * @return boolean
+	 */
+	public function isNodeInSameWorkspace(NodeInterface $node) {
+		return ($node->getWorkspace()->getName() === $this->workspaceName);
+	}
+
+	/**
+	 *
+	 * The dimension value of this node has to match the current target dimension value (must be higher in priority or equal)
+	 *
+	 * @param NodeInterface $node
+	 * @return boolean
+	 */
+	public function isNodeMatchingTargetDimensionValues(NodeInterface $node) {
+		$dimensions = $node->getDimensions();
+		$contextDimensions = $this->getDimensions();
+		foreach ($this->getTargetDimensions() as $dimensionName => $targetDimensionValue) {
+			if (!isset($dimensions[$dimensionName])) {
+				return FALSE;
+			} elseif (!in_array($targetDimensionValue, $dimensions[$dimensionName], TRUE)) {
+				$contextDimensionValues = $contextDimensions[$dimensionName];
+				$targetPositionInContext = array_search($targetDimensionValue, $contextDimensionValues, TRUE);
+				$nodePositionInContext = min(array_map(function ($value) use ($contextDimensionValues) { return array_search($value, $contextDimensionValues, TRUE); }, $dimensions[$dimensionName]));
+
+				$val = $targetPositionInContext !== FALSE && $nodePositionInContext !== FALSE && $targetPositionInContext >= $nodePositionInContext;
+				if ($val === FALSE) {
+					return FALSE;
+				}
+			}
+		}
+		return TRUE;
 	}
 
 	/**
