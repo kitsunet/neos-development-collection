@@ -11,13 +11,20 @@ namespace TYPO3\TypoScript\Tests\Functional\TypoScriptObjects\Fixtures\Model;
  * The TYPO3 project - inspiring people to share!                         *
  *                                                                        */
 
+use TYPO3\Flow\Annotations as Flow;
+use Doctrine\ORM\Mapping as ORM;
+
 /**
  * A simple cache aware model
+ *
+ * @Flow\Entity
  */
 class TestModel implements \TYPO3\Flow\Cache\CacheAwareInterface {
 
 	/**
 	 * @var string
+	 * @ORM\Id
+	 * @Flow\Identity
 	 */
 	protected $id;
 

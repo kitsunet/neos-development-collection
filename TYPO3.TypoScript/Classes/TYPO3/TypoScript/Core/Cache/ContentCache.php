@@ -44,8 +44,10 @@ class ContentCache {
 	const CACHE_SEGMENT_END_TOKEN = "\x03";
 	const CACHE_SEGMENT_SEPARATOR_TOKEN = "\x1f";
 
-	const CACHE_PLACEHOLDER_REGEX = "/\x02(?P<identifier>[a-f0-9]+)\x03/";
-	const EVAL_PLACEHOLDER_REGEX = "/\x02(?P<command>[^\x02\x1f\x03]+)\x1f(?P<context>[^\x02\x1f\x03]+)\x03/";
+	const CACHE_PLACEHOLDER_REGEX = "/\x02(?P<commandName>[a-zA-z0-9]+)=(?P<commandArgument>[^\x02\x1f\x03]+)\x1f(?P<metadata>[^\x02\x1f\x03]+)\x03/";
+
+	const CACHE_COMMAND_STATIC = 'static';
+	const CACHE_COMMAND_UNCACHED = 'eval';
 
 	const MAXIMUM_NESTING_LEVEL = 32;
 
@@ -54,9 +56,6 @@ class ContentCache {
 	 * the application.
 	 */
 	const TAG_EVERYTHING = 'Everything';
-
-	const SEGMENT_TYPE_CACHED = 'cached';
-	const SEGMENT_TYPE_UNCACHED = 'uncached';
 
 	/**
 	 * @Flow\Inject
@@ -71,59 +70,40 @@ class ContentCache {
 	protected $cache;
 
 	/**
-	 * @var \TYPO3\Flow\Property\PropertyMapper
-	 * @Flow\Inject
-	 */
-	protected $propertyMapper;
-
-	/**
-	 * @var Context
-	 * @Flow\Inject
-	 */
-	protected $securityContext;
-
-	/**
 	 * Takes the given content and adds markers for later use as a cached content segment.
 	 *
-	 * This function will add a start and an end token to the beginning and end of the content and generate a cache
-	 * identifier based on the current TypoScript path and additional values which were defined in the TypoScript
-	 * configuration by the site integrator.
-	 *
-	 * The whole cache segment (START TOKEN + IDENTIFIER + SEPARATOR TOKEN + original content + END TOKEN) is returned
-	 * as a string.
-	 *
-	 * This method is called by the TypoScript Runtime while rendering a TypoScript object.
+	 * @see createSegment()
+	 * Convenience method to avoid exposure of renderContentCacheEntryIdentifier()
 	 *
 	 * @param string $content The (partial) content which should potentially be cached later on
-	 * @param string $typoScriptPath The TypoScript path that rendered the content, for example "page<TYPO3.Neos.NodeTypes:Page>/body<Acme.Demo:DefaultPageTemplate>/parts/breadcrumbMenu"
 	 * @param array $cacheIdentifierValues The values (simple type or implementing CacheAwareInterface) that should be used to create a cache identifier, will be sorted by keys for consistent ordering
-	 * @param array $tags Tags to add to the cache entry
-	 * @param integer $lifetime Lifetime of the cache segment in seconds. NULL for the default lifetime and 0 for unlimited lifetime.
+	 * @param array $metadata Metadata for the cached entry. Contains: "tags", "lifetime", "context", "path"
 	 * @return string The original content, but with additional markers and a cache identifier added
 	 */
-	public function createCacheSegment($content, $typoScriptPath, $cacheIdentifierValues, array $tags = array(), $lifetime = NULL) {
-		$cacheIdentifier = $this->renderContentCacheEntryIdentifier($typoScriptPath, $cacheIdentifierValues);
-		$metadata = implode(',', $tags);
-		if ($lifetime !== NULL) {
-			$metadata .= ';' . $lifetime;
-		}
-		return self::CACHE_SEGMENT_START_TOKEN . $cacheIdentifier . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $metadata . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $content . self::CACHE_SEGMENT_END_TOKEN;
+	public function createCacheSegment($content, $cacheIdentifierValues, array $metadata = array()) {
+		$cacheIdentifier = $this->renderContentCacheEntryIdentifier($metadata['path'], $cacheIdentifierValues);
+		return $this->createSegment($content, self::CACHE_COMMAND_STATIC, $cacheIdentifier, $metadata);
 	}
 
 	/**
-	 * Similar to createCacheSegment() creates a content segment with markers added, but in contrast to that function
-	 * this method is used for rendering a segment which is not supposed to be cached.
+	 * Takes the given content and adds markers for later use as a cache segment.
 	 *
-	 * This method is called by the TypoScript Runtime while rendering a TypoScript object.
+	 * This function will add a start and an end token to the beginning and end of the content and add the given
+	 * command, commandArgument and metadata.
 	 *
-	 * @param string $content The content rendered by the TypoScript Runtime
-	 * @param string $typoScriptPath The TypoScript path that rendered the content, for example "page<TYPO3.Neos.NodeTypes:Page>/body<Acme.Demo:DefaultPageTemplate>/parts/breadcrumbMenu"
-	 * @param array $contextVariables TypoScript context variables which are needed to correctly render the specified TypoScript object
-	 * @return string The original content, but with additional markers added
+	 * The whole cache segment (START TOKEN + COMMAND NAME = COMMAND VALUE + SEPARATOR TOKEN + JSON METADATA + SEPARATOR TOKEN + original content + END TOKEN) is returned
+	 * as a string.
+	 *
+	 * This method is called by the TypoScript RuntimeContentCache while rendering a TypoScript object.
+	 *
+	 * @param string $content
+	 * @param string $commandName One of the ContentCache::CACHE_COMMAND_* constants
+	 * @param string $commandArgument The argument for the command. Eg. CACHE_COMMAND_UNCACHED expects the cache identifier
+	 * @param array $metadata Array of metadata for the segment. Usually contains the context, maybe cache tags, lifetime and path.
+	 * @return string
 	 */
-	public function createUncachedSegment($content, $typoScriptPath, array $contextVariables) {
-		$serializedContext = $this->serializeContext($contextVariables);
-		return self::CACHE_SEGMENT_START_TOKEN . 'eval=' . $typoScriptPath . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $serializedContext . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $content . self::CACHE_SEGMENT_END_TOKEN;
+	public function createSegment($content, $commandName, $commandArgument, array $metadata = array()) {
+		return self::CACHE_SEGMENT_START_TOKEN . $commandName . '=' . $commandArgument . self::CACHE_SEGMENT_SEPARATOR_TOKEN . json_encode($metadata) . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $content . self::CACHE_SEGMENT_END_TOKEN;
 	}
 
 	/**
@@ -149,14 +129,14 @@ class ContentCache {
 		}
 		$identifierSource .= 'securityContextHash=' . $this->securityContext->getContextHash();
 
-		return md5($typoScriptPath . '@' . $identifierSource);
+		return md5($typoScriptPath . '@' . rtrim($identifierSource, '&'));
 	}
 
 	/**
 	 * Takes a string of content which includes cache segment markers, extracts the marked segments, writes those
 	 * segments which can be cached to the actual cache and returns the cleaned up original content without markers.
 	 *
-	 * This method is called by the TypoScript Runtime while rendering a TypoScript object.
+	 * This method is called by the TypoScript RuntimeContentCache while rendering a TypoScript object.
 	 *
 	 * @param string $content The content with an outer cache segment
 	 * @param boolean $storeCacheEntries Whether to store extracted cache segments in the cache
@@ -169,12 +149,10 @@ class ContentCache {
 			$segments = $this->parser->getCacheSegments();
 
 			foreach ($segments as $segment) {
-				$metadata = explode(';', $segment['metadata']);
-				$tagsValue = $metadata[0] === '' ? array() : ($metadata[0] === '*' ? FALSE : explode(',', $metadata[0]));
+				$metadata = json_decode($segment['metadata'], TRUE);
 					// FALSE means we do not need to store the cache entry again (because it was previously fetched)
-				if ($tagsValue !== FALSE) {
-					$lifetime = isset($metadata[1]) ? (integer)$metadata[1] : NULL;
-					$this->cache->set($segment['identifier'], $segment['content'], $this->sanitizeTags($tagsValue), $lifetime);
+				if (is_array($metadata)) {
+					$this->cache->set($segment['commandArgument'], $segment['content'], $this->sanitizeTags($metadata['tags']), $metadata['lifetime']);
 				}
 			}
 		}
@@ -186,14 +164,14 @@ class ContentCache {
 	 * Tries to retrieve the specified content segment from the cache – further nested inline segments are retrieved
 	 * as well and segments which were not cacheable are rendered.
 	 *
-	 * @param \Closure $uncachedCommandCallback A callback to process commands in uncached segments
+	 * @param \Closure $commandCallback A callback to process commands in uncached segments
 	 * @param string $typoScriptPath TypoScript path identifying the TypoScript object to retrieve from the content cache
 	 * @param array $cacheIdentifierValues Further values which play into the cache identifier hash, must be the same as the ones specified while the cache entry was written
 	 * @param boolean $addCacheSegmentMarkersToPlaceholders If cache segment markers should be added – this makes sense if the cached segment is about to be included in a not-yet-cached segment
 	 * @return string|boolean The segment with replaced cache placeholders, or FALSE if a segment was missing in the cache
 	 * @throws \TYPO3\TypoScript\Exception
 	 */
-	public function getCachedSegment($uncachedCommandCallback, $typoScriptPath, $cacheIdentifierValues, $addCacheSegmentMarkersToPlaceholders = FALSE) {
+	public function getCachedSegment($commandCallback, $typoScriptPath, $cacheIdentifierValues, $addCacheSegmentMarkersToPlaceholders = FALSE) {
 		$cacheIdentifier = $this->renderContentCacheEntryIdentifier($typoScriptPath, $cacheIdentifierValues);
 		$content = $this->cache->get($cacheIdentifier);
 
@@ -201,22 +179,10 @@ class ContentCache {
 			return FALSE;
 		}
 
-		$i = 0;
-		do {
-			$replaced = $this->replaceCachePlaceholders($content, $addCacheSegmentMarkersToPlaceholders);
-			if ($replaced === FALSE) {
-				return FALSE;
-			}
-			if ($i > self::MAXIMUM_NESTING_LEVEL) {
-				throw new Exception('Maximum cache segment level reached', 1391873620);
-			}
-			$i++;
-		} while ($replaced > 0);
-
-		$this->replaceUncachedPlaceholders($uncachedCommandCallback, $content);
+		$content = $this->replaceCachePlaceholders($commandCallback, $content, $addCacheSegmentMarkersToPlaceholders);
 
 		if ($addCacheSegmentMarkersToPlaceholders) {
-			return self::CACHE_SEGMENT_START_TOKEN . $cacheIdentifier . self::CACHE_SEGMENT_SEPARATOR_TOKEN . '*' . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $content . self::CACHE_SEGMENT_END_TOKEN;
+			return self::CACHE_SEGMENT_START_TOKEN . self::CACHE_COMMAND_STATIC . '=' . $cacheIdentifier . self::CACHE_SEGMENT_SEPARATOR_TOKEN . '*' . self::CACHE_SEGMENT_SEPARATOR_TOKEN . $content . self::CACHE_SEGMENT_END_TOKEN;
 		} else {
 			return $content;
 		}
@@ -225,94 +191,45 @@ class ContentCache {
 	/**
 	 * Find cache placeholders in a cached segment and return the identifiers
 	 *
+	 * @param \Closure $commandCallback
 	 * @param string $content
 	 * @param boolean $addCacheSegmentMarkersToPlaceholders
+	 * @param integer $recursionLevel
 	 * @return integer|boolean Number of replaced placeholders or FALSE if a placeholder couldn't be found
 	 */
-	public function replaceCachePlaceholders(&$content, $addCacheSegmentMarkersToPlaceholders) {
+	public function replaceCachePlaceholders($commandCallback, $content, $addCacheSegmentMarkersToPlaceholders, $recursionLevel = 0) {
 		$cache = $this->cache;
-		$foundMissingIdentifier = FALSE;
-		$content = preg_replace_callback(self::CACHE_PLACEHOLDER_REGEX, function($match) use ($cache, &$foundMissingIdentifier, $addCacheSegmentMarkersToPlaceholders) {
-			$identifier = $match['identifier'];
-			$entry = $cache->get($identifier);
-			if ($entry !== FALSE) {
-				if ($addCacheSegmentMarkersToPlaceholders) {
-					return ContentCache::CACHE_SEGMENT_START_TOKEN . $identifier . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . '*' . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . $entry . ContentCache::CACHE_SEGMENT_END_TOKEN;
-				} else {
-					return $entry;
+		$self = $this;
+		$content = preg_replace_callback(self::CACHE_PLACEHOLDER_REGEX, function($match) use ($commandCallback, $cache, $addCacheSegmentMarkersToPlaceholders, $recursionLevel, $self) {
+			$entry = FALSE;
+			$commandName = $match['commandName'];
+			$commandArgument = $match['commandArgument'];
+			if ($commandName === ContentCache::CACHE_COMMAND_STATIC) {
+				$entry = $cache->get($commandArgument);
+			}
+
+			if ($entry === FALSE || $entry === NULL) {
+				$contextString = $match['metadata'];
+				$metadataArray = json_decode($contextString, TRUE);
+
+				$entry = $commandCallback($commandName, $commandArgument, $metadataArray);
+				$entry = $self->processCacheSegments($entry);
+			} else {
+				if ($recursionLevel > self::MAXIMUM_NESTING_LEVEL) {
+					throw new Exception('Maximum cache segment level reached', 1391873620);
 				}
+				$recursionLevel++;
+				$entry = $self->replaceCachePlaceholders($commandCallback, $entry, $addCacheSegmentMarkersToPlaceholders, $recursionLevel);
+			}
+
+			if ($addCacheSegmentMarkersToPlaceholders) {
+				return ContentCache::CACHE_SEGMENT_START_TOKEN . $commandName . '=' . $commandArgument . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . '*' . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . $entry . ContentCache::CACHE_SEGMENT_END_TOKEN;
 			} else {
-				$foundMissingIdentifier = TRUE;
-				return '';
+				return $entry;
 			}
-		}, $content, -1, $count);
-		if ($foundMissingIdentifier)  {
-			return FALSE;
-		}
-		return $count;
-	}
+		}, $content, -1);
 
-	/**
-	 * Replace segments which are marked as not-cacheable by their actual content by invoking the TypoScript Runtime.
-	 *
-	 * @param \Closure $uncachedCommandCallback
-	 * @param string $content The content potentially containing not cacheable segments marked by the respective tokens
-	 * @return string The original content, but with uncached segments replaced by the actual content
-	 */
-	protected function replaceUncachedPlaceholders(\Closure $uncachedCommandCallback, &$content) {
-		$propertyMapper = $this->propertyMapper;
-		$content = preg_replace_callback(self::EVAL_PLACEHOLDER_REGEX, function($match) use ($uncachedCommandCallback, $propertyMapper) {
-			$command = $match['command'];
-			$contextString = $match['context'];
-
-			$unserializedContext = array();
-			$serializedContextArray = json_decode($contextString, TRUE);
-			foreach ($serializedContextArray as $variableName => $typeAndValue) {
-				$value = $propertyMapper->convert($typeAndValue['value'], $typeAndValue['type']);
-				$unserializedContext[$variableName] = $value;
-			}
-
-			return $uncachedCommandCallback($command, $unserializedContext);
-		}, $content);
-	}
-
-	/**
-	 * Generates a string from the given array of context variables
-	 *
-	 * @param array $contextVariables
-	 * @return string
-	 * @throws \InvalidArgumentException
-	 */
-	protected function serializeContext(array $contextVariables) {
-		$serializedContextArray = array();
-		foreach ($contextVariables as $variableName => $contextValue) {
-			// TODO This relies on a converter being available from the context value type to string
-			if ($contextValue !== NULL) {
-				$serializedContextArray[$variableName]['type'] = $this->getTypeForContextValue($contextValue);
-				$serializedContextArray[$variableName]['value'] = $this->propertyMapper->convert($contextValue, 'string');
-			}
-		}
-		$serializedContext = json_encode($serializedContextArray);
-		return $serializedContext;
-	}
-
-	/**
-	 * TODO: Adapt to Flow change https://review.typo3.org/#/c/33138/
-	 *
-	 * @param mixed $contextValue
-	 * @return string
-	 */
-	protected function getTypeForContextValue($contextValue) {
-		if (is_object($contextValue)) {
-			if ($contextValue instanceof Proxy) {
-				$type = get_parent_class($contextValue);
-			} else {
-				$type = get_class($contextValue);
-			}
-		} else {
-			$type = gettype($contextValue);
-		}
-		return $type;
+		return $content;
 	}
 
 	/**

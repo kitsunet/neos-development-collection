@@ -74,22 +74,18 @@ class CacheSegmentParser {
 				$part = substr($content, $currentPosition, $nextEndPosition - $currentPosition);
 				$parts[$level]['content'] .= $part;
 				$currentLevelPart = &$parts[$level];
-				$identifier = $currentLevelPart['identifier'];
+				$command = $parts[$level]['commandName'] . '=' . $parts[$level]['commandArgument'];
 				$this->output .= $part;
 
-				if ($currentLevelPart['type'] === ContentCache::SEGMENT_TYPE_CACHED) {
-					$this->cacheEntries[$identifier] = $parts[$level];
+				if ($currentLevelPart['commandName'] === ContentCache::CACHE_COMMAND_STATIC) {
+					$this->cacheEntries[$command] = $parts[$level];
 				}
 
 				// The end marker ends the current level
 				unset($parts[$level]);
 				$level--;
 
-				if ($currentLevelPart['type'] === ContentCache::SEGMENT_TYPE_UNCACHED) {
-					$parts[$level]['content'] .= ContentCache::CACHE_SEGMENT_START_TOKEN . $identifier . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . $currentLevelPart['context'] . ContentCache::CACHE_SEGMENT_END_TOKEN;
-				} else {
-					$parts[$level]['content'] .= ContentCache::CACHE_SEGMENT_START_TOKEN . $identifier . ContentCache::CACHE_SEGMENT_END_TOKEN;
-				}
+				$parts[$level]['content'] .= ContentCache::CACHE_SEGMENT_START_TOKEN . $command . ContentCache::CACHE_SEGMENT_SEPARATOR_TOKEN . $currentLevelPart['metadata'] . ContentCache::CACHE_SEGMENT_END_TOKEN;
 
 				$currentPosition = $nextEndPosition + 1;
 
@@ -120,20 +116,12 @@ class CacheSegmentParser {
 					throw new Exception(sprintf('Missing segment separator token after position %d', $currentPosition), 1391855139);
 				}
 
-				$identifier = substr($content, $currentPosition, $nextIdentifierSeparatorPosition - $currentPosition);
+				$commandString = substr($content, $currentPosition, $nextIdentifierSeparatorPosition - $currentPosition);
 				$contextOrMetadata = substr($content, $nextIdentifierSeparatorPosition + 1, $nextSecondIdentifierSeparatorPosition - $nextIdentifierSeparatorPosition - 1);
-
-				$parts[$level]['identifier'] = $identifier;
-				if (strpos($identifier, 'eval=') === 0) {
-					$parts[$level]['type'] = ContentCache::SEGMENT_TYPE_UNCACHED;
-					$parts[$level]['context'] = $contextOrMetadata;
-				} else {
-					$parts[$level]['type'] = ContentCache::SEGMENT_TYPE_CACHED;
-					$parts[$level]['metadata'] = $contextOrMetadata;
-				}
+				list($parts[$level]['commandName'], $parts[$level]['commandArgument']) = explode('=', $commandString);
+				$parts[$level]['metadata'] = $contextOrMetadata;
 
 				$currentPosition = $nextSecondIdentifierSeparatorPosition + 1;
-
 				$nextStartPosition = strpos($content, ContentCache::CACHE_SEGMENT_START_TOKEN, $currentPosition);
 			}
 		};

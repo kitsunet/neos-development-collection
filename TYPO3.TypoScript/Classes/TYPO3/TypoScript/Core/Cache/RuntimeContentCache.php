@@ -57,6 +57,12 @@ class RuntimeContentCache {
 	protected $contentCache;
 
 	/**
+	 * @var \TYPO3\Flow\Property\PropertyMapper
+	 * @Flow\Inject
+	 */
+	protected $propertyMapper;
+
+	/**
 	 * @param Runtime $runtime
 	 */
 	public function __construct(Runtime $runtime) {
@@ -78,10 +84,6 @@ class RuntimeContentCache {
 		$cacheForPathEnabled = isset($configuration['mode']) && $configuration['mode'] === 'cached';
 		$cacheForPathDisabled = isset($configuration['mode']) && $configuration['mode'] === 'uncached';
 
-		if ($cacheForPathDisabled && (!isset($configuration['context']) || $configuration['context'] === array())) {
-			throw new Exception(sprintf('Missing @cache.context configuration for path "%s". An uncached segment must have one or more context variable names configured.', $typoScriptPath), 1395922119);
-		}
-
 		$currentPathIsEntryPoint = FALSE;
 		if ($this->enableContentCache && $cacheForPathEnabled) {
 			if ($this->inCacheEntryPoint === NULL) {
@@ -90,12 +92,25 @@ class RuntimeContentCache {
 			}
 		}
 
+		$contextVariables = array();
+		if ($this->enableContentCache) {
+			$contextArray = $this->runtime->getCurrentContext();
+			if (isset($configuration['context'])) {
+				foreach ($configuration['context'] as $contextVariableName) {
+					$contextVariables[$contextVariableName] = $contextArray[$contextVariableName];
+				}
+			} else {
+				$contextVariables = $contextArray;
+			}
+		}
+
 		return array(
 			'configuration' => $configuration,
 			'typoScriptPath' => $typoScriptPath,
 			'cacheForPathEnabled' => $cacheForPathEnabled,
 			'cacheForPathDisabled' => $cacheForPathDisabled,
-			'currentPathIsEntryPoint' => $currentPathIsEntryPoint
+			'currentPathIsEntryPoint' => $currentPathIsEntryPoint,
+			'contextVariables' => $contextVariables
 		);
 	}
 
@@ -116,13 +131,12 @@ class RuntimeContentCache {
 				$evaluateContext['cacheIdentifierValues'] = $this->buildCacheIdentifierValues($evaluateContext['configuration'], $evaluateContext['typoScriptPath'], $tsObject);
 
 				$self = $this;
-				$segment = $this->contentCache->getCachedSegment(function ($command, $unserializedContext) use ($self) {
-					if (strpos($command, 'eval=') === 0) {
-						$path = substr($command, 5);
-						$result = $self->evaluateUncached($path, $unserializedContext);
-						return $result;
+				$segment = $this->contentCache->getCachedSegment(function($commandName, $commandArgument, $unserializedMetadata) use ($self) {
+					$commandMethod = 'command' . ucfirst($commandName);
+					if (is_callable(array($self, $commandMethod))) {
+						return $self->$commandMethod($commandArgument, $unserializedMetadata);
 					} else {
-						throw new Exception(sprintf('Unknown uncached command "%s"', $command), 1392837596);
+						throw new Exception(sprintf('Unknown cache command "%s"', $commandName), 1392837596);
 					}
 				}, $evaluateContext['typoScriptPath'], $evaluateContext['cacheIdentifierValues'], $this->addCacheSegmentMarkersToPlaceholders);
 				if ($segment !== FALSE) {
@@ -162,24 +176,19 @@ class RuntimeContentCache {
 	 */
 	public function postProcess(array $evaluateContext, $tsObject, $output) {
 		if ($this->enableContentCache && $evaluateContext['cacheForPathEnabled']) {
-			$cacheTags = $this->buildCacheTags($evaluateContext['configuration'], $evaluateContext['typoScriptPath'], $tsObject);
 			$cacheMetadata = array_pop($this->cacheMetadata);
-			$output = $this->contentCache->createCacheSegment($output, $evaluateContext['typoScriptPath'], $evaluateContext['cacheIdentifierValues'], $cacheTags, $cacheMetadata['lifetime']);
+			$metadata = array(
+				'tags' => $this->buildCacheTags($evaluateContext['configuration'], $evaluateContext['typoScriptPath'], $tsObject),
+				'lifetime' => $cacheMetadata['lifetime'],
+				'context' => $this->serializeContext($evaluateContext['contextVariables']),
+				'path' => $evaluateContext['typoScriptPath']
+			);
+			$output = $this->contentCache->createCacheSegment($output, $evaluateContext['cacheIdentifierValues'], $metadata);
 		} elseif ($this->enableContentCache && $evaluateContext['cacheForPathDisabled'] && $this->inCacheEntryPoint) {
-			$contextArray = $this->runtime->getCurrentContext();
-			if (isset($evaluateContext['configuration']['context'])) {
-				$contextVariables = array();
-				foreach ($evaluateContext['configuration']['context'] as $contextVariableName) {
-					if (isset($contextArray[$contextVariableName])) {
-						$contextVariables[$contextVariableName] = $contextArray[$contextVariableName];
-					} else {
-						$contextVariables[$contextVariableName] = NULL;
-					}
-				}
-			} else {
-				$contextVariables = $contextArray;
-			}
-			$output = $this->contentCache->createUncachedSegment($output, $evaluateContext['typoScriptPath'], $contextVariables);
+			$metadata = array(
+				'context' => $this->serializeContext($evaluateContext['contextVariables'])
+			);
+			$output = $this->contentCache->createSegment($output, ContentCache::CACHE_COMMAND_UNCACHED, $evaluateContext['typoScriptPath'], $metadata);
 		}
 
 		if ($evaluateContext['cacheForPathEnabled'] && $evaluateContext['currentPathIsEntryPoint']) {
@@ -203,27 +212,6 @@ class RuntimeContentCache {
 		if ($evaluateContext['currentPathIsEntryPoint']) {
 			$this->inCacheEntryPoint = NULL;
 		}
-	}
-
-	/**
-	 * Evaluate a TypoScript path with a given context without content caching
-	 *
-	 * This is used to render uncached segments "out of band" in getCachedSegment of ContentCache.
-	 *
-	 * @param string $path
-	 * @param array $contextArray
-	 * @return mixed
-	 *
-	 * TODO Find another way of disabling the cache (especially to allow cached content inside uncached content)
-	 */
-	public function evaluateUncached($path, array $contextArray) {
-		$previousEnableContentCache = $this->enableContentCache;
-		$this->enableContentCache = FALSE;
-		$this->runtime->pushContextArray($contextArray);
-		$result = $this->runtime->evaluate($path);
-		$this->runtime->popContext();
-		$this->enableContentCache = $previousEnableContentCache;
-		return $result;
 	}
 
 	/**
@@ -268,7 +256,10 @@ class RuntimeContentCache {
 				$tagValue = $this->runtime->evaluate($typoScriptPath . '/__meta/cache/entryTags/' . $tagKey, $tsObject);
 				if (is_array($tagValue)) {
 					$cacheTags = array_merge($cacheTags, $tagValue);
-				} elseif ((string)$tagValue !== '') {
+					continue;
+				} 
+
+				if ((string)$tagValue !== '') {
 					$cacheTags[] = $tagValue;
 				}
 			}
@@ -276,6 +267,90 @@ class RuntimeContentCache {
 			$cacheTags = array(ContentCache::TAG_EVERYTHING);
 		}
 		return $cacheTags;
+	}
+
+	/**
+	 * Generates an array of simple types from the given array of context variables
+	 *
+	 * @param array $contextVariables
+	 * @return array
+	 * @throws \InvalidArgumentException
+	 */
+	protected function serializeContext(array $contextVariables) {
+		$serializedContextArray = array();
+		foreach ($contextVariables as $variableName => $contextValue) {
+			// TODO This relies on a converter being available from the context value type to string
+			if ($contextValue !== NULL) {
+				$serializedContextArray[$variableName]['type'] = \TYPO3\Flow\Utility\TypeHandling::getTypeForValue($contextValue);
+				$serializedContextArray[$variableName]['value'] = $this->propertyMapper->convert($contextValue, 'string');
+			}
+		}
+
+		return $serializedContextArray;
+	}
+
+	/**
+	 * Unserialize a context that was previously serialized.
+	 * INTERNAL use in a callback only.
+	 *
+	 * @param $serializedContextArray
+	 * @return array
+	 */
+	public function unserializeContext($serializedContextArray) {
+		$unserializedContext = array();
+		foreach ($serializedContextArray as $variableName => $typeAndValue) {
+			$value = $this->propertyMapper->convert($typeAndValue['value'], $typeAndValue['type']);
+			$unserializedContext[$variableName] = $value;
+		}
+
+		return $unserializedContext;
+	}
+
+	/**
+	 * Evaluate the "static" command
+	 *
+	 * @param string $cacheIdentifier For a static entry this is the entry identifier. As all commands are called in the same way we still need to give it.
+	 * @param array $metadata
+	 * @return mixed
+	 */
+	public function commandStatic($cacheIdentifier, array $metadata) {
+		$result = $this->evaluate($metadata['path'], $metadata['context']);
+		return $result;
+	}
+
+	/**
+	 * Evaluate the "eval" command
+	 *
+	 * This is used to render uncached segments "out of band" in getCachedSegment of ContentCache.
+	 *
+	 * @param string $path The TypoScript path
+	 * @param array $metadata
+	 * @return mixed
+	 */
+	public function commandEval($path, array $metadata) {
+		$result = $this->evaluate($path, $metadata['context'], FALSE);
+		return $result;
+	}
+
+	/**
+	 * Evaluate a TypoScript path with a given context and with or without caching
+	 *
+	 * @param string $path
+	 * @param array $serializedContextArray Array of context properties cast to string. Each entry consists of an array with "type" and "value".
+	 * @param boolean $cached Should the evaluation be done with enabled or disabled cache
+	 * @return mixed
+	 *
+	 * TODO Find another way of disabling the cache (especially to allow cached content inside uncached content)
+	 */
+	protected function evaluate($path, $serializedContextArray, $cached = TRUE) {
+		$contextArray = $this->unserializeContext($serializedContextArray);
+		$previousEnableContentCache = $this->enableContentCache;
+		$this->enableContentCache = $cached;
+		$this->runtime->pushContextArray($contextArray);
+		$result = $this->runtime->evaluate($path);
+		$this->runtime->popContext();
+		$this->enableContentCache = $previousEnableContentCache;
+		return $result;
 	}
 
 	/**

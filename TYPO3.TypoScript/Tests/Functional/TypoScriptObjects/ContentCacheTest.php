@@ -24,6 +24,8 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 */
 	protected $contentCache;
 
+	static protected $testablePersistenceEnabled = TRUE;
+
 	public function setUp() {
 		parent::setUp();
 		$this->contentCache = $this->objectManager->get('TYPO3\TypoScript\Core\Cache\ContentCache');
@@ -31,6 +33,7 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	}
 
 	public function tearDown() {
+		parent::tearDown();
 		// Re-inject the original cache since some tests might replace it with a mock object
 		$cacheManager = $this->objectManager->get('TYPO3\Flow\Cache\CacheManager');
 		$cacheFrontend = $cacheManager->getCache('TYPO3_TypoScript_Content');
@@ -41,7 +44,7 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function renderCachedSegmentTwiceYieldsSameResult() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -64,7 +67,7 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function cacheUsesContextValuesAsDefaultCacheIdentifier() {
-		$object1 = new TestModel(42, 'Object value 1');
+		$object1 = new TestModel('42', 'Object value 1');
 		$object2 = new TestModel(21, 'Object value 2');
 
 		$view = $this->buildView();
@@ -89,7 +92,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function nestedCacheSegmentsAreFetchedFromCache() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -114,7 +119,10 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function uncachedSegmentOnTopLevelIsProcessedWithoutChanges() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
+
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -154,7 +162,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function uncachedSegmentInCachedSegmentIsEvaluatedFromSerializedContext() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -176,7 +186,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function uncachedSegmentInUpdatedCachedSegmentIsEvaluatedFromContextValue() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -188,7 +200,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 		$this->assertSame('Outer segment|object=Object value 1|Uncached segment|counter=1|End uncached|End outer', $firstRenderResult);
 
 			// Assigning a new object changes the identifier and therefore a new outer cache segment is created
-		$newObject = new TestModel(21, 'New object value');
+		$newObject = new TestModel('21', 'New object value');
+		$this->persistenceManager->add($newObject);
+		$this->persistenceManager->persistAll();
 		$view->assign('object', $newObject);
 
 		$renderResultAfterNewObject = $view->render();
@@ -202,7 +216,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function flushByTagFlushesCacheEntriesWithSpecificEntryTagsAndRerenderCreatesOuterSegment() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -224,14 +240,16 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 
 			// Since the cache entry for "Inner segment 1" is missing, the outer segment is also evaluated, but not "Inner segment 2"
 		$secondRenderResult = $view->render();
-		$this->assertSame('Outer segment|counter=2|Inner segment 1|object=Object value 2|End innerInner segment 2|object=Object value 1|End inner|End outer', $secondRenderResult);
+		$this->assertSame('Outer segment|counter=1|Inner segment 1|object=Object value 2|End innerInner segment 2|object=Object value 1|End inner|End outer', $secondRenderResult);
 	}
 
 	/**
 	 * @test
 	 */
 	public function entryTagsUseSanitizedTagValue() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -264,7 +282,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function processorsAreAppliedBeforeCachingASegment() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -283,7 +303,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function processorsAreAppliedAfterUncachedSegments() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -302,7 +324,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function conditionsAreAppliedAfterGettingCachedSegment() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -329,7 +353,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function conditionsAreAppliedForUncachedSegment() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -361,7 +387,7 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function handlingInnerRenderingExceptionsDisablesTheContentCache() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
@@ -380,7 +406,9 @@ class ContentCacheTest extends AbstractTypoScriptObjectTest {
 	 * @test
 	 */
 	public function exceptionInAlreadyCachedSegmentShouldNotLeaveSegmentMarkersInOutput() {
-		$object = new TestModel(42, 'Object value 1');
+		$object = new TestModel('42', 'Object value 1');
+		$this->persistenceManager->add($object);
+		$this->persistenceManager->persistAll();
 
 		$view = $this->buildView();
 		$view->setOption('enableContentCache', TRUE);
