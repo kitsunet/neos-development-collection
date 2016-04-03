@@ -1,0 +1,22 @@
+TYPO3:
+  Flow:
+    http:
+
+      # Defines the workflow of one request from bootstrap to the HTTP response
+      #
+      # By default this workflow is devided in three sub-chains "preprocess", "process" and "postprocess" but the chain can be restructured as needed
+      #
+      chain:
+
+        'preprocess':
+          position: 'before process'
+          chain:
+            'activeSite':
+              position: 'end'
+              component: 'Neos\Node\Routing\Http\DomainMatchingComponent'
+
+        'process':
+          chain:
+            'routing':
+              position: 'start'
+              component: 'TYPO3\Flow\Mvc\Routing\RoutingComponent'

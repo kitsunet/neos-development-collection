@@ -11,15 +11,28 @@
         onlyMatchSiteNodes: true
   appendExceedingArguments: true
 
+
 -
   name: 'content with URI suffix'
-  uriPattern: '{node}<defaultUriSuffix>'
+  uriPattern: '{node}'
   appendExceedingArguments: true
+#
+#-
+#  name: 'content with URI suffix'
+#  uriPattern: '{node}/{foo}'
+#  defaults:
+#    foo: 'foo'
+#  routeParts:
+#    node:
+#      options:
+#        allowPartialEvaluation: true
+#  appendExceedingArguments: true
+#
 
 # This route is just a dummy, it should always be last as it should never be used to actually match a incoming request.
 -
   name:          'Dummy wireframe route to enable uri resolution while in wireframe mode.'
-  uriPattern:    '{node}<defaultUriSuffix>'
+  uriPattern:    '{node}'
   defaults:
     '@action':     'showWireframe'
   appendExceedingArguments: true

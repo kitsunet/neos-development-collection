@@ -1,0 +1,2 @@
+TYPO3\Neos\Routing\FrontendNodeRoutePartHandlerInterface:
+  className: Neos\Node\Routing\FrontendNodeRoutePartHandler

@@ -1,0 +1,18 @@
+{
+    "description": "NeosCMS Node Routing Components",
+    "type": "neos-package",
+    "name": "neos/node-routing",
+    "require": {
+        "typo3/neos": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Neos\\Node\\Routing\\": "Classes/"
+        }
+    },
+    "extra": {
+        "neos": {
+            "package-key": "Neos.Node.Routing"
+        }
+    }
+}
