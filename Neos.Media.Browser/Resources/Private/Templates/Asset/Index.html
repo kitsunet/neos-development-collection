@@ -93,7 +93,7 @@
 
 <f:section name="Sidebar">
     <form action="{f:uri.action(action: 'index')}" method="get" class="neos-search">
-        <input type="hidden" value="{browserConstraints -> f:format.json()}" />
+        <input type="hidden" name="browserConstraints" value="{browserConstraints -> f:format.json()}" />
         <button type="submit" title="{neos:backend.translate(id: 'search.title', package: 'Neos.Media.Browser')}" data-neos-toggle="tooltip"><i class="fas fa-search"></i></button>
         <div>
             <input type="search" name="{f:if(condition: argumentNamespace, then: '{argumentNamespace}[searchTerm]', else: 'searchTerm')}" placeholder="{neos:backend.translate(id: 'search.placeholder', package: 'Neos.Media.Browser')}" value="{searchTerm}"{f:if(condition: '{tags -> f:count()} <= 25', then: ' autofocus="autofocus"')} />
