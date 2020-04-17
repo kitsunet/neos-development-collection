@@ -12,8 +12,8 @@ namespace Neos\Media\Browser\Controller;
  */
 
 use Neos\Flow\Annotations as Flow;
-use Neos\Media\Domain\Model\Asset;
 use Neos\Media\Domain\Model\AssetCollection;
+use Neos\Media\Domain\Model\AssetInterface;
 use Neos\Media\Domain\Model\AssetSource\AssetSourceAwareInterface;
 use Neos\Media\Domain\Model\ImportedAsset;
 use Neos\Media\Domain\Model\Tag;
@@ -61,12 +61,12 @@ class ImageController extends AssetController
     /**
      * @param string $assetSourceIdentifier
      * @param string $assetProxyIdentifier
-     * @param Asset $asset
+     * @param AssetInterface $asset
      * @return void
      * @throws \Neos\Flow\Mvc\Exception\StopActionException
      * @throws \Neos\Flow\Mvc\Exception\UnsupportedRequestTypeException
      */
-    public function editAction(string $assetSourceIdentifier = null, string $assetProxyIdentifier = null, Asset $asset = null): void
+    public function editAction(string $assetSourceIdentifier = null, string $assetProxyIdentifier = null, AssetInterface $asset = null): void
     {
         if ($assetSourceIdentifier !== null && $assetProxyIdentifier !== null) {
             parent::editAction($assetSourceIdentifier, $assetProxyIdentifier);
