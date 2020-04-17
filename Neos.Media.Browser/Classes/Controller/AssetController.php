@@ -36,6 +36,7 @@ use Neos\Media\Domain\Model\Asset;
 use Neos\Media\Domain\Model\AssetCollection;
 use Neos\Media\Domain\Model\AssetInterface;
 use Neos\Media\Domain\Model\AssetSource\AssetNotFoundExceptionInterface;
+use Neos\Media\Domain\Model\AssetSource\AssetProxy\AssetProxyInterface;
 use Neos\Media\Domain\Model\AssetSource\AssetProxyRepositoryInterface;
 use Neos\Media\Domain\Model\AssetSource\AssetSourceConnectionExceptionInterface;
 use Neos\Media\Domain\Model\AssetSource\AssetSourceInterface;
@@ -388,12 +389,74 @@ class AssetController extends ActionController
      *
      * @param string $assetSourceIdentifier
      * @param string $assetProxyIdentifier
+     * @param AssetInterface $asset
      * @return void
-     * @throws StopActionException
-     * @throws UnsupportedRequestTypeException
      */
-    public function editAction(string $assetSourceIdentifier, string $assetProxyIdentifier): void
+    public function editAction(string $assetSourceIdentifier = null, string $assetProxyIdentifier = null, AssetInterface $asset = null): void
     {
+        if ($assetSourceIdentifier === null && $assetProxyIdentifier === null && $asset === null) {
+            throw new \RuntimeException('No asset source and identifier nor asset given.', 1587055228);
+        }
+
+        try {
+            $assetProxy = $this->getAssetProxyFrom($assetSourceIdentifier, $assetProxyIdentifier, $asset);
+        } catch (AssetNotFoundExceptionInterface | AssetSourceConnectionExceptionInterface $e) {
+            $this->view->assign('connectionError', $e);
+            return;
+        }
+
+        $assetSourceIdentifier = $assetProxy->getAssetSource()->getIdentifier();
+        if (!isset($this->assetSources[$assetSourceIdentifier])) {
+            throw new \RuntimeException('Given asset source is not configured.', 1587114305);
+        }
+
+        $assetSource = $this->assetSources[$assetSourceIdentifier];
+
+        $tags = [];
+        $canShowVariants = false;
+        $contentPreview = 'ContentDefault';
+        // TODO: For generic implementation (allowing other asset sources to provide asset collections), the following needs to be refactored:
+
+        if ($assetProxy instanceof NeosAssetProxy) {
+            $asset = $assetProxy->getAsset();
+            if ($asset instanceof Asset) {
+                $assetCollections = $asset->getAssetCollections();
+                $tags = $assetCollections->count() > 0 ? $this->tagRepository->findByAssetCollections($assetCollections->toArray()) : $this->tagRepository->findAll();
+            } else {
+                $tags = $this->tagRepository->findAll();
+            }
+
+            $canShowVariants = $asset instanceof VariantSupportInterface;
+
+            switch ($asset->getFileExtension()) {
+                case 'pdf':
+                    $contentPreview = 'ContentPdf';
+                    break;
+            }
+        }
+
+        $this->view->assignMultiple([
+            'tags' => $tags,
+            'assetProxy' => $assetProxy,
+            'assetCollections' => $this->assetCollectionRepository->findAll(),
+            'contentPreview' => $contentPreview,
+            'assetSource' => $assetSource,
+            'canShowVariants' => $canShowVariants
+        ]);
+    }
+
+    /**
+     * @param string $assetSourceIdentifier
+     * @param string $assetProxyIdentifier
+     * @param AssetInterface $asset
+     * @return AssetProxyInterface
+     */
+    private function getAssetProxyFrom(string $assetSourceIdentifier = null, string $assetProxyIdentifier = null, AssetInterface $asset = null): AssetProxyInterface
+    {
+        if ($assetSourceIdentifier === null && $assetProxyIdentifier === null && $asset !== null) {
+            return $asset->getAssetProxy();
+        }
+
         if (!isset($this->assetSources[$assetSourceIdentifier])) {
             throw new \RuntimeException('Given asset source is not configured.', 1509632166);
         }
@@ -401,39 +464,7 @@ class AssetController extends ActionController
         $assetSource = $this->assetSources[$assetSourceIdentifier];
         $assetProxyRepository = $assetSource->getAssetProxyRepository();
 
-        try {
-            $assetProxy = $assetProxyRepository->getAssetProxy($assetProxyIdentifier);
-
-            $tags = [];
-            $contentPreview = 'ContentDefault';
-            if ($assetProxyRepository instanceof SupportsTaggingInterface && $assetProxyRepository instanceof SupportsCollectionsInterface) {
-                // TODO: For generic implementation (allowing other asset sources to provide asset collections), the following needs to be refactored:
-
-                if ($assetProxy instanceof NeosAssetProxy) {
-                    /** @var Asset $asset */
-                    $asset = $assetProxy->getAsset();
-                    $assetCollections = $asset->getAssetCollections();
-                    $tags = $assetCollections->count() > 0 ? $this->tagRepository->findByAssetCollections($assetCollections->toArray()) : $this->tagRepository->findAll();
-
-                    switch ($asset->getFileExtension()) {
-                        case 'pdf':
-                            $contentPreview = 'ContentPdf';
-                            break;
-                    }
-                }
-            }
-
-            $this->view->assignMultiple([
-                'tags' => $tags,
-                'assetProxy' => $assetProxy,
-                'assetCollections' => $this->assetCollectionRepository->findAll(),
-                'contentPreview' => $contentPreview,
-                'assetSource' => $assetSource,
-                'canShowVariants' => ($assetProxy instanceof NeosAssetProxy) && ($assetProxy->getAsset() instanceof VariantSupportInterface)
-            ]);
-        } catch (AssetNotFoundExceptionInterface | AssetSourceConnectionExceptionInterface $e) {
-            $this->view->assign('connectionError', $e);
-        }
+        return $assetProxyRepository->getAssetProxy($assetProxyIdentifier);
     }
 
     /**
