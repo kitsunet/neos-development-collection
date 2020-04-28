@@ -265,6 +265,7 @@ class AssetController extends ActionController
         $tags = [];
         $assetProxies = [];
 
+        $allCollectionsCount = 0;
         $allCount = 0;
         $searchResultCount = 0;
         $untaggedCount = 0;
@@ -291,6 +292,7 @@ class AssetController extends ActionController
                 $assetProxies = $assetProxyRepository->findAll();
             }
 
+            $allCollectionsCount = $this->assetRepository->countAll();
             $allCount = ($activeAssetCollection ? $this->assetRepository->countByAssetCollection($activeAssetCollection) : $allCollectionsCount);
             $searchResultCount = isset($assetProxies) ? $assetProxies->count() : 0;
             $untaggedCount = ($assetProxyRepository instanceof SupportsTaggingInterface ? $assetProxyRepository->countUntagged() : 0);
